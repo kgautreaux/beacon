@@ -1,16 +1,11 @@
-defmodule Beacon.TailwindCompilerTest do
+defmodule Beacon.RuntimeCSS.TailwindCompilerTest do
   use Beacon.DataCase, async: false
 
   import ExUnit.CaptureIO
   import Beacon.Fixtures
-  alias Beacon.TailwindCompiler
+  alias Beacon.RuntimeCSS.TailwindCompiler
 
   @site :my_site
-
-  setup_all do
-    start_supervised!({Beacon.Loader, Beacon.Config.fetch!(@site)})
-    :ok
-  end
 
   defp create_page(_) do
     stylesheet_fixture()
@@ -33,7 +28,20 @@ defmodule Beacon.TailwindCompilerTest do
 
     published_page_fixture(
       layout_id: layout.id,
-      path: "/a",
+      path: "/tailwind-test",
+      template: """
+      <main>
+        <h2 class="text-gray-200">Some Values:</h2>
+        <%= for val <- @beacon_live_data[:vals] do %>
+          <%= my_component("sample_component", val: val) %>
+        <% end %>
+      </main>
+      """
+    )
+
+    published_page_fixture(
+      layout_id: layout.id,
+      path: "/tailwind-test-post-process",
       template: """
       <main>
         <h2 class="text-gray-200">Some Values:</h2>
@@ -54,13 +62,11 @@ defmodule Beacon.TailwindCompilerTest do
       """
     )
 
-    Beacon.Loader.load_stylesheets(@site)
-    Beacon.Loader.load_components(@site)
-    Beacon.Loader.load_layouts(@site)
-    Beacon.Loader.load_pages(@site)
-    Beacon.Loader.load_runtime_css(@site)
-
     :ok
+  end
+
+  test "config" do
+    assert TailwindCompiler.config(@site) =~ "module.exports"
   end
 
   describe "compile site" do
@@ -88,21 +94,10 @@ defmodule Beacon.TailwindCompilerTest do
         refute output =~ "text-gray-300"
       end)
     end
-  end
 
-  describe "compile template" do
-    test "compile a specific template binary with custom tailwind config" do
-      capture_io(fn ->
-        config = Beacon.Registry.config!(@site)
-        Registry.register(Beacon.Registry, {:site, :test_tailwind_compile_template}, config)
-
-        Beacon.Registry.update_config(:test_tailwind_compile_template, fn config ->
-          %{config | tailwind_config: Path.join([File.cwd!(), "test", "support", "tailwind.config.custom.js.eex"])}
-        end)
-
-        {:ok, css} = TailwindCompiler.compile(:test_tailwind_compile_template, ~S|<div class="text-gray-50">|)
-        assert css =~ "text-gray-50"
-      end)
+    test "fetch post processed page templates" do
+      assert {:ok, output} = TailwindCompiler.compile(@site)
+      assert output =~ "text-blue-200"
     end
   end
 end

@@ -12,7 +12,6 @@ defmodule Mix.Tasks.Beacon.InstallTest do
   @prod_path "config/prod.exs"
   @application_path "lib/my_app/application.ex"
   @router_path "lib/my_app_web/router.ex"
-  @data_source_path "lib/my_app/beacon_data_source.ex"
   @mixfile_path "mix.exs"
   @seeds_path "priv/repo/beacon_seeds.exs"
 
@@ -45,7 +44,7 @@ defmodule Mix.Tasks.Beacon.InstallTest do
                # Configures the endpoint
                config :my_app, MyAppWeb.Endpoint,
                  url: [host: "localhost"],
-                 render_errors: [formats: [html: BeaconWeb.ErrorHTML]],
+                 render_errors: [formats: [html: BeaconWeb.ErrorHTML, json: MyAppWeb.ErrorJSON], layout: false],
                  pubsub_server: MyApp.PubSub,
                  live_view: [signing_salt: "Ozb0CE3q"]
 
@@ -242,7 +241,7 @@ defmodule Mix.Tasks.Beacon.InstallTest do
                      MyAppWeb.Endpoint,
                      # Start a worker by calling: MyApp.Worker.start_link(arg)
                      # {MyApp.Worker, arg}
-                    {Beacon, sites: [[site: :my_site, endpoint: MyAppWeb.Endpoint, data_source: MyApp.BeaconDataSource]]}
+                    {Beacon, sites: [[site: :my_site, endpoint: MyAppWeb.Endpoint]]}
                ]
 
                    # See https://hexdocs.pm/elixir/Supervisor.html
@@ -395,9 +394,6 @@ defmodule Mix.Tasks.Beacon.InstallTest do
                end
                """
 
-      # Creates beacon_data_source file
-      assert File.exists?(@data_source_path)
-
       # Creates beacon_seeds file
       assert File.exists?(@seeds_path)
     end)
@@ -413,7 +409,6 @@ defmodule Mix.Tasks.Beacon.InstallTest do
       prod = File.read!(@prod_path)
       app = File.read!(@application_path)
       router = File.read!(@router_path)
-      data_source = File.read!(@data_source_path)
       mixfile = File.read!(@mixfile_path)
       seeds = File.read!(@seeds_path)
 
@@ -425,7 +420,6 @@ defmodule Mix.Tasks.Beacon.InstallTest do
       assert File.read!(@prod_path) == prod
       assert File.read!(@application_path) == app
       assert File.read!(@router_path) == router
-      assert File.read!(@data_source_path) == data_source
       assert File.read!(@mixfile_path) == mixfile
       assert File.read!(@seeds_path) == seeds
     end)
@@ -448,10 +442,77 @@ defmodule Mix.Tasks.Beacon.InstallTest do
         Install.run(["--site", "beacon_"])
       end
 
+      # Invalid path value
+      assert_raise Mix.Error, fn ->
+        Install.run(["--site", "blog", "--path", "forgot_slash_at_beginning"])
+      end
+
       # Invalid option
       assert_raise OptionParser.ParseError, ~r/1 error found!\n--invalid-argument : Unknown option/, fn ->
         Install.run(["--invalid-argument", "invalid"])
       end
+    end)
+  end
+
+  test "SUCCESS: New flag --path value updates beacon_path" do
+    Mix.Project.in_project(:my_app, ".", fn _module ->
+      Install.run(["--site", "my_site", "--path", "/some_other_path"])
+
+      # Injects beacon scope into router file
+      assert File.read!(@router_path) ==
+               """
+               defmodule MyAppWeb.Router do
+                 use MyAppWeb, :router
+
+                 pipeline :browser do
+                   plug :accepts, ["html"]
+                   plug :fetch_session
+                   plug :fetch_live_flash
+                   plug :put_root_layout, html: {MyAppWeb.Layouts, :root}
+                   plug :protect_from_forgery
+                   plug :put_secure_browser_headers
+                 end
+
+                 pipeline :api do
+                   plug :accepts, ["json"]
+                 end
+
+                 scope "/", MyAppWeb do
+                   pipe_through :browser
+
+                   get "/", PageController, :home
+                 end
+
+                 # Other scopes may use custom stacks.
+                 # scope "/api", MyAppWeb do
+                 #   pipe_through :api
+                 # end
+
+                 # Enable LiveDashboard and Swoosh mailbox preview in development
+                 if Application.compile_env(:test_app, :dev_routes) do
+                   # If you want to use the LiveDashboard in production, you should put
+                   # it behind authentication and allow only admins to access it.
+                   # If your application does not have an admins-only section yet,
+                   # you can use Plug.BasicAuth to set up some basic authentication
+                   # as long as you are also using SSL (which you should anyway).
+                   import Phoenix.LiveDashboard.Router
+
+                   scope "/dev" do
+                     pipe_through :browser
+
+                     live_dashboard "/dashboard", metrics: MyAppWeb.Telemetry
+                     forward "/mailbox", Plug.Swoosh.MailboxPreview
+                   end
+                 end
+
+                 use Beacon.Router
+
+                 scope "/" do
+                   pipe_through :browser
+                   beacon_site "/some_other_path", site: :my_site
+                 end
+               end
+               """
     end)
   end
 end
